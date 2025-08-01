@@ -25,15 +25,15 @@ export default function Production({ gameSession, currentState }: ProductionProp
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [selectedMethod, setSelectedMethod] = useState<string>('');
   const [selectedStartWeek, setSelectedStartWeek] = useState<string>('');
-  const [batchQuantity, setBatchQuantity] = useState<number>(25000);
+  const [selectedBatches, setSelectedBatches] = useState<number>(1);
 
   // Get game constants
   const { data: gameConstants } = useQuery({
     queryKey: ['/api/game/constants'],
   });
 
-  const capacitySchedule = gameConstants?.CAPACITY_SCHEDULE || [0, 0, 25000, 50000, 100000, 100000, 150000, 150000, 200000, 200000, 100000, 50000, 0, 0, 0];
-  const manufacturingCosts = gameConstants?.MANUFACTURING || {};
+  const capacitySchedule = (gameConstants as any)?.CAPACITY_SCHEDULE || [0, 0, 25000, 50000, 100000, 100000, 150000, 150000, 200000, 200000, 100000, 50000, 0, 0, 0];
+  const manufacturingCosts = (gameConstants as any)?.MANUFACTURING || {};
 
   // Calculate capacity usage from scheduled batches
   const scheduledBatches = currentState?.productionSchedule?.batches || [];
@@ -43,8 +43,17 @@ export default function Production({ gameSession, currentState }: ProductionProp
     return weeks.map(week => {
       const capacity = capacitySchedule[week - 1] || 0;
       const used = scheduledBatches
-        .filter((batch: any) => batch.startWeek === week && batch.method === 'inhouse')
-        .reduce((total: number, batch: any) => total + (batch.quantity || 0), 0);
+        .filter((batch: any) => {
+          if (batch.method !== 'inhouse') return false;
+          // Check if this batch occupies this week
+          const batchStart = batch.startWeek;
+          const batchDuration = manufacturingCosts[batch.product]?.inHouseTime || 2;
+          return week >= batchStart && week < batchStart + batchDuration;
+        })
+        .reduce((total: number, batch: any) => {
+          const batchDuration = manufacturingCosts[batch.product]?.inHouseTime || 2;
+          return total + Math.ceil((batch.quantity || 0) / batchDuration);
+        }, 0);
       
       return { week, capacity, used };
     });
@@ -76,13 +85,13 @@ export default function Production({ gameSession, currentState }: ProductionProp
       queryClient.invalidateQueries({ queryKey: ['/api/game/current'] });
       toast({
         title: "Production Batch Scheduled",
-        description: `${batchQuantity.toLocaleString()} units scheduled for production.`,
+        description: `${(selectedBatches * 25000).toLocaleString()} units (${selectedBatches} batch${selectedBatches > 1 ? 'es' : ''}) scheduled for production.`,
       });
       // Reset form
       setSelectedProduct('');
       setSelectedMethod('');
       setSelectedStartWeek('');
-      setBatchQuantity(25000);
+      setSelectedBatches(1);
     },
     onError: (error: any) => {
       if (isUnauthorizedError(error)) {
@@ -114,18 +123,9 @@ export default function Production({ gameSession, currentState }: ProductionProp
       return;
     }
 
-    // Enforce batch size of exactly 25,000 units
-    if (batchQuantity !== 25000) {
-      toast({
-        title: "Invalid Batch Size",
-        description: "Production batches must be exactly 25,000 units each.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     const startWeek = parseInt(selectedStartWeek);
     const currentWeek = currentState?.weekNumber || 1;
+    const totalUnits = selectedBatches * 25000;
     
     if (startWeek < currentWeek) {
       toast({
@@ -155,35 +155,52 @@ export default function Production({ gameSession, currentState }: ProductionProp
       }
     }
 
-    // Check capacity for in-house production
+    // Get production duration for capacity checking
+    const productionTime = selectedMethod === 'inhouse' 
+      ? manufacturingCosts[selectedProduct]?.inHouseTime || 2
+      : manufacturingCosts[selectedProduct]?.outsourceTime || 1;
+
+    // Check capacity for in-house production across all production weeks
     if (selectedMethod === 'inhouse') {
-      const weekCapacity = capacitySchedule[startWeek - 1] || 0;
-      const weekUsed = scheduledBatches
-        .filter((batch: any) => batch.startWeek === startWeek && batch.method === 'inhouse')
-        .reduce((total: number, batch: any) => total + (batch.quantity || 0), 0);
+      const unitsPerWeek = Math.ceil(totalUnits / productionTime);
       
-      if (weekUsed + batchQuantity > weekCapacity) {
-        toast({
-          title: "Capacity Exceeded",
-          description: `Week ${startWeek} has insufficient capacity. Available: ${(weekCapacity - weekUsed).toLocaleString()} units.`,
-          variant: "destructive",
-        });
-        return;
+      for (let week = startWeek; week < startWeek + productionTime; week++) {
+        const weekCapacity = capacitySchedule[week - 1] || 0;
+        const weekUsed = scheduledBatches
+          .filter((batch: any) => {
+            // Check if this batch occupies this week
+            const batchStart = batch.startWeek;
+            const batchDuration = batch.method === 'inhouse' 
+              ? manufacturingCosts[batch.product]?.inHouseTime || 2
+              : manufacturingCosts[batch.product]?.outsourceTime || 1;
+            return batch.method === 'inhouse' && week >= batchStart && week < batchStart + batchDuration;
+          })
+          .reduce((total: number, batch: any) => {
+            const batchDuration = batch.method === 'inhouse' 
+              ? manufacturingCosts[batch.product]?.inHouseTime || 2
+              : manufacturingCosts[batch.product]?.outsourceTime || 1;
+            return total + Math.ceil((batch.quantity || 0) / batchDuration);
+          }, 0);
+        
+        if (weekUsed + unitsPerWeek > weekCapacity) {
+          toast({
+            title: "Capacity Exceeded",
+            description: `Week ${week} has insufficient capacity. Available: ${(weekCapacity - weekUsed).toLocaleString()} units, needed: ${unitsPerWeek.toLocaleString()} units.`,
+            variant: "destructive",
+          });
+          return;
+        }
       }
     }
 
     // Calculate completion week and cost
-    const productionTime = selectedMethod === 'inhouse' 
-      ? manufacturingCosts[selectedProduct]?.inHouseTime || 2
-      : manufacturingCosts[selectedProduct]?.outsourceTime || 1;
-    
     const completionWeek = startWeek + productionTime;
     
     const unitCost = selectedMethod === 'inhouse'
       ? manufacturingCosts[selectedProduct]?.inHouseCost || 10
       : manufacturingCosts[selectedProduct]?.outsourceCost || 15;
     
-    const totalCost = batchQuantity * unitCost;
+    const totalCost = totalUnits * unitCost;
 
     const batch = {
       id: Date.now().toString(),
@@ -191,7 +208,8 @@ export default function Production({ gameSession, currentState }: ProductionProp
       method: selectedMethod,
       startWeek,
       completionWeek,
-      quantity: batchQuantity,
+      quantity: totalUnits,
+      batches: selectedBatches,
       unitCost,
       totalCost,
       status: 'scheduled',
@@ -373,18 +391,20 @@ export default function Production({ gameSession, currentState }: ProductionProp
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
-                <Input
-                  type="number"
-                  value={batchQuantity}
-                  onChange={(e) => setBatchQuantity(parseInt(e.target.value) || 25000)}
-                  min="25000"
-                  max="25000"
-                  step="25000"
-                  placeholder="25000"
-                  disabled
-                  className="bg-gray-50"
-                />
-                <p className="text-xs text-gray-500 mt-1">Fixed at 25,000 units per batch</p>
+                <Select value={selectedBatches.toString()} onValueChange={(value) => setSelectedBatches(parseInt(value))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select batches" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 batch (25,000 units)</SelectItem>
+                    <SelectItem value="2">2 batches (50,000 units)</SelectItem>
+                    <SelectItem value="3">3 batches (75,000 units)</SelectItem>
+                    <SelectItem value="4">4 batches (100,000 units)</SelectItem>
+                    <SelectItem value="5">5 batches (125,000 units)</SelectItem>
+                    <SelectItem value="6">6 batches (150,000 units)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-gray-500 mt-1">Each batch = 25,000 units</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Production Method</label>
@@ -423,7 +443,7 @@ export default function Production({ gameSession, currentState }: ProductionProp
                   onClick={handleAddBatch}
                   disabled={addBatchMutation.isPending || !selectedProduct || !selectedMethod || !selectedStartWeek}
                 >
-                  {addBatchMutation.isPending ? "Adding..." : "Add Batch"}
+                  {addBatchMutation.isPending ? "Scheduling..." : `Schedule ${selectedBatches} Batch${selectedBatches > 1 ? 'es' : ''}`}
                 </Button>
               </div>
             </div>
@@ -433,8 +453,8 @@ export default function Production({ gameSession, currentState }: ProductionProp
                 <h4 className="font-medium text-blue-900 mb-2">Batch Preview</h4>
                 <div className="text-sm text-blue-800 space-y-1">
                   <div>• Product: {getProductName(selectedProduct)}</div>
-                  <div>• Quantity: {batchQuantity.toLocaleString()} units (standard batch size)</div>
-                  <div>• Total Cost: {formatCurrency(batchQuantity * (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseCost || 10) : (manufacturingCosts[selectedProduct]?.outsourceCost || 15)))}</div>
+                  <div>• Quantity: {(selectedBatches * 25000).toLocaleString()} units ({selectedBatches} batch{selectedBatches > 1 ? 'es' : ''})</div>
+                  <div>• Total Cost: {formatCurrency((selectedBatches * 25000) * (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseCost || 10) : (manufacturingCosts[selectedProduct]?.outsourceCost || 15)))}</div>
                   <div>• Completion: Week {parseInt(selectedStartWeek) + (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseTime || 2) : (manufacturingCosts[selectedProduct]?.outsourceTime || 1))}</div>
                   
                   {/* Material availability check */}
@@ -479,7 +499,10 @@ export default function Production({ gameSession, currentState }: ProductionProp
                           <StatusIcon size={20} className="text-gray-600" />
                           <div>
                             <h4 className="font-medium text-gray-900">{getProductName(batch.product)}</h4>
-                            <p className="text-sm text-gray-600">{batch.quantity?.toLocaleString()} units</p>
+                            <p className="text-sm text-gray-600">
+                              {batch.quantity?.toLocaleString()} units 
+                              {batch.batches && ` (${batch.batches} batch${batch.batches > 1 ? 'es' : ''})`}
+                            </p>
                           </div>
                         </div>
                         <Badge className={statusInfo.color}>
