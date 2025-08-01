@@ -96,9 +96,6 @@ export interface ValidationResult {
 
 export class GameEngine {
   static processMaterialPurchases(currentState: any, updates: any): any {
-    console.log('Processing material purchases - currentState:', currentState);
-    console.log('Processing material purchases - updates:', updates);
-    
     const newPurchases = updates.materialPurchases || [];
     const existingPurchases = currentState.materialPurchases || [];
     
@@ -114,9 +111,6 @@ export class GameEngine {
       }
       return isNew;
     });
-
-    console.log('New purchases list:', newPurchasesList);
-    console.log('Total purchase cost:', totalPurchaseCost);
 
     if (newPurchasesList.length === 0) {
       return updates; // No new purchases to process
@@ -140,12 +134,7 @@ export class GameEngine {
       updatedCreditUsed = Math.min(GAME_CONSTANTS.CREDIT_LIMIT, currentCreditUsed + remainingCost);
     }
 
-    console.log('Financial updates:', {
-      originalCash: currentCash,
-      originalCreditUsed: currentCreditUsed,
-      newCash: updatedCashOnHand,
-      newCreditUsed: updatedCreditUsed,
-    });
+
 
     // Update material inventory when shipments arrive
     const updatedMaterialInventory = { ...(currentState.materialInventory || {}) };

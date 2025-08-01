@@ -218,17 +218,14 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
   // Save procurement data mutation
   const updateStateMutation = useMutation({
     mutationFn: async (updates: any) => {
-      console.log('Making API request to:', `/api/game/${gameSession.id}/week/${currentState.weekNumber}/update`);
-      console.log('With updates:', updates);
-      const response = await apiRequest('POST', `/api/game/${gameSession.id}/week/${currentState.weekNumber}/update`, updates);
-      console.log('API response:', response);
-      return response;
+      await apiRequest('POST', `/api/game/${gameSession.id}/week/${currentState.weekNumber}/update`, updates);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/game/current'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/game', gameSession?.id, 'weeks'] });
       toast({
-        title: "Saved",
-        description: "Your procurement decisions have been saved.",
+        title: "Materials Purchased Successfully!",
+        description: `£${contractData.totalCommitment.toLocaleString()} charged. Materials arrive Week ${(currentState?.weekNumber || 1) + (contractData.type === 'spot' ? 1 : contractData.type === 'fvc' ? 3 : 2)}.`,
       });
     },
     onError: (error) => {
@@ -305,8 +302,6 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
       status: 'ordered',
     };
 
-    console.log('Sending material purchase:', materialPurchase);
-
     const updates = {
       materialPurchases: [
         ...(currentState?.materialPurchases || []),
@@ -314,7 +309,6 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
       ]
     };
 
-    console.log('Sending updates:', updates);
     updateStateMutation.mutate(updates);
     
     // Show success message
