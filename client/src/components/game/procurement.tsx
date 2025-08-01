@@ -268,17 +268,75 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
     }));
   };
 
-  const handleSave = () => {
-    const updates = {
-      procurementContracts: {
-        ...contractData,
-        supplier: selectedSupplier,
-        printOptions,
-        materialQuantities,
-        timestamp: new Date().toISOString(),
-      },
+  const handleBuyMaterials = () => {
+    if (contractData.orders.length === 0) {
+      toast({
+        title: "No Materials Selected",
+        description: "Please select materials and quantities before purchasing.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Calculate shipment arrival week based on contract type and current week
+    const currentWeek = currentState?.weekNumber || 1;
+    let shipmentWeek = currentWeek + 1; // Default: next week
+    
+    if (contractData.type === 'spot') {
+      shipmentWeek = currentWeek + 1; // Spot orders arrive next week
+    } else if (contractData.type === 'forward') {
+      shipmentWeek = currentWeek + 3; // Forward orders arrive in 3 weeks
+    }
+
+    const materialPurchase = {
+      ...contractData,
+      supplier: selectedSupplier,
+      printOptions,
+      materialQuantities,
+      purchaseWeek: currentWeek,
+      shipmentWeek,
+      timestamp: new Date().toISOString(),
+      status: 'ordered',
     };
+
+    const updates = {
+      materialPurchases: [
+        ...(currentState?.materialPurchases || []),
+        materialPurchase
+      ],
+      // Update cash flow
+      cashFlow: {
+        ...(currentState?.cashFlow || {}),
+        materialCosts: (currentState?.cashFlow?.materialCosts || 0) + contractData.totalCommitment,
+      }
+    };
+
     updateStateMutation.mutate(updates);
+    
+    // Show success message
+    toast({
+      title: "Materials Purchased!",
+      description: `Materials ordered from ${selectedSupplier === 'supplier1' ? 'Supplier A' : 'Supplier B'}. Shipment arrives Week ${shipmentWeek}.`,
+      variant: "default",
+    });
+
+    // Reset form after successful purchase
+    setMaterialQuantities({
+      selvedgeDenim: 0,
+      standardDenim: 0,
+      egyptianCotton: 0,
+      polyesterBlend: 0,
+      fineWaleCorduroy: 0,
+      wideWaleCorduroy: 0,
+    });
+    setPrintOptions({
+      selvedgeDenim: false,
+      standardDenim: false,
+      egyptianCotton: false,
+      polyesterBlend: false,
+      fineWaleCorduroy: false,
+      wideWaleCorduroy: false,
+    });
   };
 
   const formatCurrency = (value: number) => {
@@ -297,6 +355,53 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
         <h1 className="text-2xl font-bold text-gray-900 mb-2">Procurement</h1>
         <p className="text-gray-600">Secure materials from suppliers with optimal contract terms</p>
       </div>
+
+      {/* Previous Material Purchases */}
+      {currentState?.materialPurchases && currentState.materialPurchases.length > 0 && (
+        <Card className="border border-gray-100 mb-6">
+          <CardHeader>
+            <CardTitle>Material Purchase History</CardTitle>
+            <p className="text-sm text-gray-600">Track your material orders and shipment status</p>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {currentState.materialPurchases.map((purchase: any, index: number) => (
+                <div key={index} className="border border-gray-200 rounded-lg p-4">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <span className="font-medium text-sm">
+                        {purchase.supplier === 'supplier1' ? 'Supplier A' : 'Supplier B'} - 
+                        {purchase.type === 'spot' ? ' Spot Order' : ' Forward Contract'}
+                      </span>
+                      <div className="text-xs text-gray-500">
+                        Ordered Week {purchase.purchaseWeek} • Arrives Week {purchase.shipmentWeek}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono text-sm">{formatCurrency(purchase.totalCommitment)}</div>
+                      <span className={`inline-flex px-2 py-1 text-xs rounded-full ${
+                        purchase.shipmentWeek <= (currentState?.weekNumber || 1)
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-yellow-100 text-yellow-800'
+                      }`}>
+                        {purchase.shipmentWeek <= (currentState?.weekNumber || 1) ? 'Delivered' : 'In Transit'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    {purchase.orders?.map((order: any, orderIndex: number) => (
+                      <span key={orderIndex}>
+                        {order.material.replace(/([A-Z])/g, ' $1').trim()}: {order.quantity.toLocaleString()} units
+                        {orderIndex < purchase.orders.length - 1 ? ' • ' : ''}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Supplier Comparison */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
@@ -674,23 +779,42 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
             {/* Action Buttons */}
             <div className="flex justify-end gap-4 mt-6">
               <Button
-                onClick={handleSave}
+                onClick={handleBuyMaterials}
                 disabled={contractData.orders.length === 0 || updateStateMutation.isPending || !canPlaceOrders}
-                className="flex items-center gap-2"
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-700"
               >
                 {updateStateMutation.isPending ? (
                   <>
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Saving...
+                    Processing...
                   </>
                 ) : (
                   <>
                     <ShoppingCart size={16} />
-                    Save Procurement Plan
+                    Buy Materials
                   </>
                 )}
               </Button>
             </div>
+
+            {/* Shipment Timeline Info */}
+            {contractData.orders.length > 0 && (
+              <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-medium text-blue-900 mb-2">Shipment Timeline</h4>
+                <div className="text-sm text-blue-800 space-y-1">
+                  <div>• Current Week: {currentState?.weekNumber || 1}</div>
+                  <div>• Contract Type: {contractData.type === 'spot' ? 'Spot Order' : 'Forward Contract'}</div>
+                  <div>• Materials will arrive in: <span className="font-medium">
+                    Week {(currentState?.weekNumber || 1) + (contractData.type === 'spot' ? 1 : 3)}
+                  </span></div>
+                  <div className="text-xs text-blue-600 mt-2">
+                    {contractData.type === 'spot' 
+                      ? 'Spot orders arrive the following week' 
+                      : 'Forward contracts take 3 weeks to fulfill'}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {!canPlaceOrders && (
               <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
