@@ -2,9 +2,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
-import { Factory, Zap } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { isUnauthorizedError } from "@/lib/authUtils";
+import { Factory, Zap, Calendar, Clock, AlertCircle, CheckCircle2 } from "lucide-react";
+import { useState, useEffect } from "react";
 
 interface ProductionProps {
   gameSession: any;
@@ -12,17 +18,187 @@ interface ProductionProps {
 }
 
 export default function Production({ gameSession, currentState }: ProductionProps) {
-  const capacityData = [
-    { week: 3, capacity: 25000, used: 0 },
-    { week: 4, capacity: 50000, used: 0 },
-    { week: 5, capacity: 100000, used: 0 },
-    { week: 6, capacity: 100000, used: 0 },
-    { week: 7, capacity: 150000, used: 0 },
-    { week: 8, capacity: 150000, used: 0 },
-  ];
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Form state for new production batch
+  const [selectedProduct, setSelectedProduct] = useState<string>('');
+  const [selectedMethod, setSelectedMethod] = useState<string>('');
+  const [selectedStartWeek, setSelectedStartWeek] = useState<string>('');
+  const [batchQuantity, setBatchQuantity] = useState<number>(25000);
+
+  // Get game constants
+  const { data: gameConstants } = useQuery({
+    queryKey: ['/api/game/constants'],
+  });
+
+  const capacitySchedule = gameConstants?.CAPACITY_SCHEDULE || [0, 0, 25000, 50000, 100000, 100000, 150000, 150000, 200000, 200000, 100000, 50000, 0, 0, 0];
+  const manufacturingCosts = gameConstants?.MANUFACTURING || {};
+
+  // Calculate capacity usage from scheduled batches
+  const scheduledBatches = currentState?.productionSchedule?.batches || [];
+  
+  const getCapacityData = () => {
+    const weeks = [3, 4, 5, 6, 7, 8];
+    return weeks.map(week => {
+      const capacity = capacitySchedule[week - 1] || 0;
+      const used = scheduledBatches
+        .filter((batch: any) => batch.startWeek === week && batch.method === 'inhouse')
+        .reduce((total: number, batch: any) => total + (batch.quantity || 0), 0);
+      
+      return { week, capacity, used };
+    });
+  };
+
+  const capacityData = getCapacityData();
 
   const getCapacityPercentage = (used: number, capacity: number) => {
     return capacity > 0 ? (used / capacity) * 100 : 0;
+  };
+
+  // Get available materials from inventory
+  const materialInventory = currentState?.materialInventory || {};
+  const productData = currentState?.productData || {};
+
+  // Production batch mutation
+  const addBatchMutation = useMutation({
+    mutationFn: async (batch: any) => {
+      await apiRequest('POST', `/api/game/${gameSession.id}/week/${currentState.weekNumber}/update`, {
+        productionSchedule: {
+          batches: [
+            ...scheduledBatches,
+            batch
+          ]
+        }
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/game/current'] });
+      toast({
+        title: "Production Batch Scheduled",
+        description: `${batchQuantity.toLocaleString()} units scheduled for production.`,
+      });
+      // Reset form
+      setSelectedProduct('');
+      setSelectedMethod('');
+      setSelectedStartWeek('');
+      setBatchQuantity(25000);
+    },
+    onError: (error: any) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to schedule production batch. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleAddBatch = () => {
+    if (!selectedProduct || !selectedMethod || !selectedStartWeek) {
+      toast({
+        title: "Missing Information",
+        description: "Please select product, method, and start week.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const startWeek = parseInt(selectedStartWeek);
+    const currentWeek = currentState?.weekNumber || 1;
+    
+    if (startWeek < currentWeek) {
+      toast({
+        title: "Invalid Start Week",
+        description: "Cannot schedule production for past weeks.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check capacity for in-house production
+    if (selectedMethod === 'inhouse') {
+      const weekCapacity = capacitySchedule[startWeek - 1] || 0;
+      const weekUsed = scheduledBatches
+        .filter((batch: any) => batch.startWeek === startWeek && batch.method === 'inhouse')
+        .reduce((total: number, batch: any) => total + (batch.quantity || 0), 0);
+      
+      if (weekUsed + batchQuantity > weekCapacity) {
+        toast({
+          title: "Capacity Exceeded",
+          description: `Week ${startWeek} has insufficient capacity. Available: ${(weekCapacity - weekUsed).toLocaleString()} units.`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    // Calculate completion week and cost
+    const productionTime = selectedMethod === 'inhouse' 
+      ? manufacturingCosts[selectedProduct]?.inHouseTime || 2
+      : manufacturingCosts[selectedProduct]?.outsourceTime || 1;
+    
+    const completionWeek = startWeek + productionTime;
+    
+    const unitCost = selectedMethod === 'inhouse'
+      ? manufacturingCosts[selectedProduct]?.inHouseCost || 10
+      : manufacturingCosts[selectedProduct]?.outsourceCost || 15;
+    
+    const totalCost = batchQuantity * unitCost;
+
+    const batch = {
+      id: Date.now().toString(),
+      product: selectedProduct,
+      method: selectedMethod,
+      startWeek,
+      completionWeek,
+      quantity: batchQuantity,
+      unitCost,
+      totalCost,
+      status: 'scheduled',
+      timestamp: new Date().toISOString(),
+    };
+
+    addBatchMutation.mutate(batch);
+  };
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(value);
+  };
+
+  const getProductName = (productKey: string) => {
+    const names = {
+      jacket: "Vintage Denim Jacket",
+      dress: "Floral Print Dress", 
+      pants: "Corduroy Pants"
+    };
+    return names[productKey as keyof typeof names] || productKey;
+  };
+
+  const getBatchStatus = (batch: any) => {
+    const currentWeek = currentState?.weekNumber || 1;
+    if (batch.completionWeek <= currentWeek) {
+      return { status: 'completed', color: 'bg-green-100 text-green-800', icon: CheckCircle2 };
+    } else if (batch.startWeek <= currentWeek) {
+      return { status: 'in-progress', color: 'bg-blue-100 text-blue-800', icon: Clock };
+    } else {
+      return { status: 'scheduled', color: 'bg-gray-100 text-gray-800', icon: Calendar };
+    }
   };
 
   return (
@@ -146,62 +322,145 @@ export default function Production({ gameSession, currentState }: ProductionProp
           {/* Add Production Batch */}
           <div className="mb-6 p-4 border border-gray-200 rounded-lg">
             <h3 className="font-medium text-gray-900 mb-4">Schedule New Production Batch</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Product</label>
-                <Select>
+                <Select value={selectedProduct} onValueChange={setSelectedProduct}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select product" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="jacket">Vintage Denim Jacket</SelectItem>
-                    <SelectItem value="dress">Floral Print Dress</SelectItem>
-                    <SelectItem value="pants">Corduroy Pants</SelectItem>
+                    {Object.keys(productData).length > 0 ? (
+                      Object.keys(productData).map(product => (
+                        <SelectItem key={product} value={product}>
+                          {getProductName(product)}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="" disabled>Complete design phase first</SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+                <Input
+                  type="number"
+                  value={batchQuantity}
+                  onChange={(e) => setBatchQuantity(parseInt(e.target.value) || 0)}
+                  min="1000"
+                  step="1000"
+                  placeholder="25000"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Production Method</label>
-                <Select>
+                <Select value={selectedMethod} onValueChange={setSelectedMethod}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select method" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="inhouse">In-house (2-3 weeks, £8-15/unit)</SelectItem>
-                    <SelectItem value="outsourced">Outsourced (1 week, £14-25/unit)</SelectItem>
+                    <SelectItem value="inhouse">
+                      In-house ({manufacturingCosts[selectedProduct]?.inHouseTime || 2}-3 weeks, {formatCurrency(manufacturingCosts[selectedProduct]?.inHouseCost || 10)}/unit)
+                    </SelectItem>
+                    <SelectItem value="outsourced">
+                      Outsourced ({manufacturingCosts[selectedProduct]?.outsourceTime || 1} week, {formatCurrency(manufacturingCosts[selectedProduct]?.outsourceCost || 15)}/unit)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Start Week</label>
-                <Select>
+                <Select value={selectedStartWeek} onValueChange={setSelectedStartWeek}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select week" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="3">Week 3</SelectItem>
-                    <SelectItem value="4">Week 4</SelectItem>
-                    <SelectItem value="5">Week 5</SelectItem>
-                    <SelectItem value="6">Week 6</SelectItem>
+                    {[3, 4, 5, 6].filter(week => week >= (currentState?.weekNumber || 1)).map(week => (
+                      <SelectItem key={week} value={week.toString()}>
+                        Week {week}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="flex items-end">
-                <Button className="w-full">
-                  Add Batch
+                <Button 
+                  className="w-full" 
+                  onClick={handleAddBatch}
+                  disabled={addBatchMutation.isPending || !selectedProduct || !selectedMethod || !selectedStartWeek}
+                >
+                  {addBatchMutation.isPending ? "Adding..." : "Add Batch"}
                 </Button>
               </div>
             </div>
+            
+            {selectedProduct && selectedMethod && selectedStartWeek && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 className="font-medium text-blue-900 mb-2">Batch Preview</h4>
+                <div className="text-sm text-blue-800 space-y-1">
+                  <div>• Product: {getProductName(selectedProduct)}</div>
+                  <div>• Quantity: {batchQuantity.toLocaleString()} units</div>
+                  <div>• Total Cost: {formatCurrency(batchQuantity * (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseCost || 10) : (manufacturingCosts[selectedProduct]?.outsourceCost || 15)))}</div>
+                  <div>• Completion: Week {parseInt(selectedStartWeek) + (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseTime || 2) : (manufacturingCosts[selectedProduct]?.outsourceTime || 1))}</div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Scheduled Batches */}
           <div className="space-y-4">
             <h3 className="font-medium text-gray-900">Scheduled Production Batches</h3>
-            <div className="text-center py-8 text-gray-500">
-              <Factory className="mx-auto mb-2" size={48} />
-              <p>No production batches scheduled yet</p>
-              <p className="text-sm">Add your first batch above to get started</p>
-            </div>
+            {scheduledBatches.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <Factory className="mx-auto mb-2" size={48} />
+                <p>No production batches scheduled yet</p>
+                <p className="text-sm">Add your first batch above to get started</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {scheduledBatches.map((batch: any) => {
+                  const statusInfo = getBatchStatus(batch);
+                  const StatusIcon = statusInfo.icon;
+                  
+                  return (
+                    <div key={batch.id} className="p-4 border border-gray-200 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <StatusIcon size={20} className="text-gray-600" />
+                          <div>
+                            <h4 className="font-medium text-gray-900">{getProductName(batch.product)}</h4>
+                            <p className="text-sm text-gray-600">{batch.quantity?.toLocaleString()} units</p>
+                          </div>
+                        </div>
+                        <Badge className={statusInfo.color}>
+                          {statusInfo.status.replace('-', ' ')}
+                        </Badge>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-600">Method:</span>
+                          <div className="font-medium">{batch.method === 'inhouse' ? 'In-house' : 'Outsourced'}</div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Start Week:</span>
+                          <div className="font-medium">Week {batch.startWeek}</div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Completion:</span>
+                          <div className="font-medium">Week {batch.completionWeek}</div>
+                        </div>
+                        <div>
+                          <span className="text-gray-600">Total Cost:</span>
+                          <div className="font-medium">{formatCurrency(batch.totalCost || 0)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

@@ -121,7 +121,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (updates.materialPurchases) {
           const processedUpdates = GameEngine.processMaterialPurchases(weeklyState, updates);
           weeklyState = await storage.updateWeeklyState(weeklyState.id, processedUpdates);
-        } else {
+        } 
+        // Process production schedule if it exists in updates
+        else if (updates.productionSchedule) {
+          const processedUpdates = GameEngine.processProductionSchedule(weeklyState, updates);
+          weeklyState = await storage.updateWeeklyState(weeklyState.id, processedUpdates);
+        } 
+        else {
           // Update existing state
           weeklyState = await storage.updateWeeklyState(weeklyState.id, updates);
         }

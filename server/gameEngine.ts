@@ -156,6 +156,50 @@ export class GameEngine {
       materialCosts: (parseFloat(currentState.materialCosts || '0') + totalPurchaseCost).toString(),
     };
   }
+
+  static processProductionSchedule(currentState: any, updates: any): any {
+    const newProductionSchedule = updates.productionSchedule;
+    if (!newProductionSchedule) return updates;
+
+    const existingBatches = currentState.productionSchedule?.batches || [];
+    const newBatches = newProductionSchedule.batches || [];
+    
+    // Calculate cost of new batches
+    let totalProductionCost = 0;
+    const addedBatches = newBatches.filter((newBatch: any) => {
+      return !existingBatches.some((existing: any) => existing.id === newBatch.id);
+    });
+
+    addedBatches.forEach((batch: any) => {
+      totalProductionCost += batch.totalCost || 0;
+    });
+
+    if (totalProductionCost === 0) return updates;
+
+    // Update financial data
+    const currentCash = parseFloat(currentState.cashOnHand || GAME_CONSTANTS.STARTING_CAPITAL);
+    const currentCreditUsed = parseFloat(currentState.creditUsed || 0);
+    
+    let updatedCashOnHand = currentCash;
+    let updatedCreditUsed = currentCreditUsed;
+    
+    if (totalProductionCost <= currentCash) {
+      // Pay with cash
+      updatedCashOnHand = currentCash - totalProductionCost;
+    } else {
+      // Use cash + credit
+      const remainingCost = totalProductionCost - currentCash;
+      updatedCashOnHand = 0;
+      updatedCreditUsed = Math.min(GAME_CONSTANTS.CREDIT_LIMIT, currentCreditUsed + remainingCost);
+    }
+
+    return {
+      ...updates,
+      cashOnHand: updatedCashOnHand.toString(),
+      creditUsed: updatedCreditUsed.toString(),
+      productionCosts: (parseFloat(currentState.productionCosts || '0') + totalProductionCost).toString(),
+    };
+  }
   
   static calculateDemand(
     product: keyof typeof GAME_CONSTANTS.PRODUCTS,
