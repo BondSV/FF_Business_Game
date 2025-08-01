@@ -119,7 +119,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else {
         // Process material purchases if they exist in updates
         if (updates.materialPurchases) {
+          console.log('Processing material purchases:', updates.materialPurchases);
           const processedUpdates = GameEngine.processMaterialPurchases(weeklyState, updates);
+          console.log('Processed updates:', processedUpdates);
           weeklyState = await storage.updateWeeklyState(weeklyState.id, processedUpdates);
         } else {
           // Update existing state

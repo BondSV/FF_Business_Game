@@ -218,7 +218,11 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
   // Save procurement data mutation
   const updateStateMutation = useMutation({
     mutationFn: async (updates: any) => {
-      await apiRequest('PATCH', `/api/game/${gameSession.id}/week/${currentState.weekNumber}`, updates);
+      console.log('Making API request to:', `/api/game/${gameSession.id}/week/${currentState.weekNumber}/update`);
+      console.log('With updates:', updates);
+      const response = await apiRequest('POST', `/api/game/${gameSession.id}/week/${currentState.weekNumber}/update`, updates);
+      console.log('API response:', response);
+      return response;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/game/current'] });
@@ -284,8 +288,10 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
     
     if (contractData.type === 'spot') {
       shipmentWeek = currentWeek + 1; // Spot orders arrive next week
-    } else if (contractData.type === 'forward') {
-      shipmentWeek = currentWeek + 3; // Forward orders arrive in 3 weeks
+    } else if (contractData.type === 'fvc') {
+      shipmentWeek = currentWeek + 3; // Forward contracts arrive in 3 weeks
+    } else if (contractData.type === 'gmc') {
+      shipmentWeek = currentWeek + 2; // GMC contracts arrive in 2 weeks
     }
 
     const materialPurchase = {
@@ -299,18 +305,16 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
       status: 'ordered',
     };
 
+    console.log('Sending material purchase:', materialPurchase);
+
     const updates = {
       materialPurchases: [
         ...(currentState?.materialPurchases || []),
         materialPurchase
-      ],
-      // Update cash flow
-      cashFlow: {
-        ...(currentState?.cashFlow || {}),
-        materialCosts: (currentState?.cashFlow?.materialCosts || 0) + contractData.totalCommitment,
-      }
+      ]
     };
 
+    console.log('Sending updates:', updates);
     updateStateMutation.mutate(updates);
     
     // Show success message
@@ -803,14 +807,23 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
                 <h4 className="font-medium text-blue-900 mb-2">Shipment Timeline</h4>
                 <div className="text-sm text-blue-800 space-y-1">
                   <div>• Current Week: {currentState?.weekNumber || 1}</div>
-                  <div>• Contract Type: {contractData.type === 'spot' ? 'Spot Order' : 'Forward Contract'}</div>
+                  <div>• Contract Type: {
+                    contractData.type === 'spot' ? 'Spot Order' : 
+                    contractData.type === 'fvc' ? 'Forward Contract' : 
+                    'GMC Contract'
+                  }</div>
                   <div>• Materials will arrive in: <span className="font-medium">
-                    Week {(currentState?.weekNumber || 1) + (contractData.type === 'spot' ? 1 : 3)}
+                    Week {(currentState?.weekNumber || 1) + (
+                      contractData.type === 'spot' ? 1 : 
+                      contractData.type === 'fvc' ? 3 : 2
+                    )}
                   </span></div>
                   <div className="text-xs text-blue-600 mt-2">
                     {contractData.type === 'spot' 
                       ? 'Spot orders arrive the following week' 
-                      : 'Forward contracts take 3 weeks to fulfill'}
+                      : contractData.type === 'fvc'
+                      ? 'Forward contracts take 3 weeks to fulfill'
+                      : 'GMC contracts take 2 weeks to fulfill'}
                   </div>
                 </div>
               </div>
