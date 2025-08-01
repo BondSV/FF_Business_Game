@@ -114,6 +114,16 @@ export default function Production({ gameSession, currentState }: ProductionProp
       return;
     }
 
+    // Enforce batch size of exactly 25,000 units
+    if (batchQuantity !== 25000) {
+      toast({
+        title: "Invalid Batch Size",
+        description: "Production batches must be exactly 25,000 units each.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const startWeek = parseInt(selectedStartWeek);
     const currentWeek = currentState?.weekNumber || 1;
     
@@ -124,6 +134,25 @@ export default function Production({ gameSession, currentState }: ProductionProp
         variant: "destructive",
       });
       return;
+    }
+
+    // Check material availability - materials must arrive before or during production start
+    const productMaterial = productData[selectedProduct]?.fabric;
+    if (productMaterial) {
+      const materialPurchases = currentState?.materialPurchases || [];
+      const availableMaterials = materialPurchases.filter((purchase: any) => 
+        purchase.shipmentWeek <= startWeek && 
+        purchase.orders?.some((order: any) => order.material === productMaterial)
+      );
+      
+      if (availableMaterials.length === 0) {
+        toast({
+          title: "Materials Not Available",
+          description: `${productMaterial} materials will not be available by Week ${startWeek}. Check your material purchase schedule.`,
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     // Check capacity for in-house production
@@ -233,7 +262,7 @@ export default function Production({ gameSession, currentState }: ProductionProp
               </div>
               <div>
                 <span className="text-gray-600">Batch size:</span>
-                <div className="font-medium">25,000 units</div>
+                <div className="font-medium text-primary">25,000 units (fixed)</div>
               </div>
               <div>
                 <span className="text-gray-600">Capacity:</span>
@@ -295,7 +324,7 @@ export default function Production({ gameSession, currentState }: ProductionProp
               </div>
               <div>
                 <span className="text-gray-600">Batch size:</span>
-                <div className="font-medium">25,000 units</div>
+                <div className="font-medium text-primary">25,000 units (fixed)</div>
               </div>
             </div>
             
@@ -347,11 +376,15 @@ export default function Production({ gameSession, currentState }: ProductionProp
                 <Input
                   type="number"
                   value={batchQuantity}
-                  onChange={(e) => setBatchQuantity(parseInt(e.target.value) || 0)}
-                  min="1000"
-                  step="1000"
+                  onChange={(e) => setBatchQuantity(parseInt(e.target.value) || 25000)}
+                  min="25000"
+                  max="25000"
+                  step="25000"
                   placeholder="25000"
+                  disabled
+                  className="bg-gray-50"
                 />
+                <p className="text-xs text-gray-500 mt-1">Fixed at 25,000 units per batch</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Production Method</label>
@@ -400,9 +433,25 @@ export default function Production({ gameSession, currentState }: ProductionProp
                 <h4 className="font-medium text-blue-900 mb-2">Batch Preview</h4>
                 <div className="text-sm text-blue-800 space-y-1">
                   <div>• Product: {getProductName(selectedProduct)}</div>
-                  <div>• Quantity: {batchQuantity.toLocaleString()} units</div>
+                  <div>• Quantity: {batchQuantity.toLocaleString()} units (standard batch size)</div>
                   <div>• Total Cost: {formatCurrency(batchQuantity * (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseCost || 10) : (manufacturingCosts[selectedProduct]?.outsourceCost || 15)))}</div>
                   <div>• Completion: Week {parseInt(selectedStartWeek) + (selectedMethod === 'inhouse' ? (manufacturingCosts[selectedProduct]?.inHouseTime || 2) : (manufacturingCosts[selectedProduct]?.outsourceTime || 1))}</div>
+                  
+                  {/* Material availability check */}
+                  {(() => {
+                    const productMaterial = productData[selectedProduct]?.fabric;
+                    const materialPurchases = currentState?.materialPurchases || [];
+                    const materialAvailable = materialPurchases.some((purchase: any) => 
+                      purchase.shipmentWeek <= parseInt(selectedStartWeek) && 
+                      purchase.orders?.some((order: any) => order.material === productMaterial)
+                    );
+                    
+                    return (
+                      <div className={`flex items-center gap-2 ${materialAvailable ? 'text-green-700' : 'text-red-700'}`}>
+                        {materialAvailable ? '✓' : '⚠'} Materials ({productMaterial}): {materialAvailable ? 'Available' : 'Not available by start week'}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}
