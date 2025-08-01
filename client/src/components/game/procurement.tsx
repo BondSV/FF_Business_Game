@@ -1,14 +1,226 @@
+import { useState, useEffect } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { isUnauthorizedError } from "@/lib/authUtils";
+import { ShoppingCart, Calculator } from "lucide-react";
 
 interface ProcurementProps {
   gameSession: any;
   currentState: any;
 }
 
+interface MaterialOrder {
+  supplier: 'supplier1' | 'supplier2';
+  material: string;
+  quantity: number;
+  unitPrice: number;
+  totalCost: number;
+}
+
+interface ContractData {
+  type: 'fvc' | 'gmc' | 'spot' | null;
+  supplier: 'supplier1' | 'supplier2' | 'both';
+  orders: MaterialOrder[];
+  totalCommitment: number;
+  discount: number;
+}
+
 export default function Procurement({ gameSession, currentState }: ProcurementProps) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  
+  // Initialize form data from current state
+  const [contractData, setContractData] = useState<ContractData>({
+    type: currentState?.procurementContracts?.type || null,
+    supplier: currentState?.procurementContracts?.supplier || 'supplier1',
+    orders: currentState?.procurementContracts?.orders || [],
+    totalCommitment: 0,
+    discount: 0,
+  });
+
+  const [materialQuantities, setMaterialQuantities] = useState<Record<string, number>>({
+    selvedgeDenim: 0,
+    standardDenim: 0,
+    egyptianCotton: 0,
+    polyesterBlend: 0,
+    fineWaleCorduroy: 0,
+    wideWaleCorduroy: 0,
+  });
+
+  const [selectedSupplier, setSelectedSupplier] = useState<'supplier1' | 'supplier2'>('supplier1');
+
+  // Load existing procurement data when component mounts or currentState changes
+  useEffect(() => {
+    if (currentState?.procurementContracts) {
+      const contracts = currentState.procurementContracts;
+      setContractData({
+        type: contracts.type || null,
+        supplier: contracts.supplier || 'supplier1',
+        orders: contracts.orders || [],
+        totalCommitment: contracts.totalCommitment || 0,
+        discount: contracts.discount || 0,
+      });
+      
+      if (contracts.supplier) {
+        setSelectedSupplier(contracts.supplier);
+      }
+
+      // Reconstruct material quantities from orders
+      if (contracts.orders && contracts.orders.length > 0) {
+        const quantities: Record<string, number> = {
+          selvedgeDenim: 0,
+          standardDenim: 0,
+          egyptianCotton: 0,
+          polyesterBlend: 0,
+          fineWaleCorduroy: 0,
+          wideWaleCorduroy: 0,
+        };
+        
+        contracts.orders.forEach((order: MaterialOrder) => {
+          quantities[order.material] = order.quantity;
+        });
+        
+        setMaterialQuantities(quantities);
+      }
+    }
+  }, [currentState]);
+
+  // Material prices for both suppliers
+  const supplierPrices = {
+    supplier1: {
+      selvedgeDenim: 16,
+      standardDenim: 10,
+      egyptianCotton: 12,
+      polyesterBlend: 7,
+      fineWaleCorduroy: 14,
+      wideWaleCorduroy: 9,
+    },
+    supplier2: {
+      selvedgeDenim: 13,
+      egyptianCotton: 10,
+      polyesterBlend: 6,
+      fineWaleCorduroy: 11,
+      wideWaleCorduroy: 7,
+    },
+  };
+
+  // Calculate volume discount
+  const calculateDiscount = (totalVolume: number, supplier: string) => {
+    if (totalVolume >= 500000) return supplier === 'supplier1' ? 0.12 : 0.12;
+    if (totalVolume >= 300000) return 0.07;
+    if (totalVolume >= 100000) return 0.03;
+    return 0;
+  };
+
+  // Calculate total cost and commitment
+  useEffect(() => {
+    const orders: MaterialOrder[] = [];
+    let totalVolume = 0;
+    let totalCost = 0;
+
+    Object.entries(materialQuantities).forEach(([material, quantity]) => {
+      if (quantity > 0) {
+        const unitPrice = supplierPrices[selectedSupplier][material as keyof typeof supplierPrices.supplier1];
+        if (unitPrice) {
+          const order: MaterialOrder = {
+            supplier: selectedSupplier,
+            material,
+            quantity,
+            unitPrice,
+            totalCost: quantity * unitPrice,
+          };
+          orders.push(order);
+          totalVolume += quantity;
+          totalCost += order.totalCost;
+        }
+      }
+    });
+
+    const discount = calculateDiscount(totalVolume, selectedSupplier);
+    const discountedCost = totalCost * (1 - discount);
+
+    setContractData(prev => ({
+      ...prev,
+      orders,
+      totalCommitment: discountedCost,
+      discount: discount * 100,
+    }));
+  }, [materialQuantities, selectedSupplier]);
+
+  // Save procurement data mutation
+  const updateStateMutation = useMutation({
+    mutationFn: async (updates: any) => {
+      await apiRequest('PATCH', `/api/game/${gameSession.id}/week/${currentState.weekNumber}`, updates);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/game/current'] });
+      toast({
+        title: "Saved",
+        description: "Your procurement decisions have been saved.",
+      });
+    },
+    onError: (error) => {
+      if (isUnauthorizedError(error)) {
+        toast({
+          title: "Unauthorized",
+          description: "You are logged out. Logging in again...",
+          variant: "destructive",
+        });
+        setTimeout(() => {
+          window.location.href = "/api/login";
+        }, 500);
+        return;
+      }
+      toast({
+        title: "Error",
+        description: "Failed to save procurement data. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleContractSelect = (contractType: 'fvc' | 'gmc' | 'spot') => {
+    setContractData(prev => ({
+      ...prev,
+      type: contractType,
+    }));
+  };
+
+  const handleMaterialQuantityChange = (material: string, quantity: number) => {
+    setMaterialQuantities(prev => ({
+      ...prev,
+      [material]: Math.max(0, quantity),
+    }));
+  };
+
+  const handleSave = () => {
+    const updates = {
+      procurementContracts: {
+        ...contractData,
+        supplier: selectedSupplier,
+        timestamp: new Date().toISOString(),
+      },
+    };
+    updateStateMutation.mutate(updates);
+  };
+
+  const formatCurrency = (value: number) => {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(value);
+  };
+
+  const canPlaceOrders = currentState?.weekNumber <= 6;  // Can only order in development phase
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -143,7 +355,7 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
         </Card>
       </div>
 
-      {/* Contract Types */}
+      {/* Contract Selection */}
       <Card className="border border-gray-100 mb-8">
         <CardHeader>
           <CardTitle>Contract Options</CardTitle>
@@ -152,7 +364,11 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
         <CardContent>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* FVC Contract */}
-            <div className="border border-gray-200 rounded-lg p-4">
+            <div className={`border rounded-lg p-4 cursor-pointer transition-colors ${
+              contractData.type === 'fvc' 
+                ? 'border-primary bg-primary bg-opacity-10' 
+                : 'border-gray-200 hover:border-gray-300'
+            }`} onClick={() => handleContractSelect('fvc')}>
               <h3 className="font-semibold text-gray-900 mb-2">
                 <TooltipWrapper content="Contract Type: High-risk, high-reward. Requires a large upfront payment for all materials in Week 1. This is the best way to achieve the highest possible volume discounts.">
                   <span className="cursor-help">Full Volume Commitment (FVC)</span>
@@ -164,13 +380,24 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
                 <p>• Highest discount potential</p>
                 <p>• Committed to full volume</p>
               </div>
-              <Button className="w-full" variant="outline">
-                Select FVC
+              <Button 
+                className="w-full" 
+                variant={contractData.type === 'fvc' ? 'default' : 'outline'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleContractSelect('fvc');
+                }}
+              >
+                {contractData.type === 'fvc' ? '✓ Selected' : 'Select FVC'}
               </Button>
             </div>
 
             {/* GMC Contract */}
-            <div className="border border-gray-200 rounded-lg p-4">
+            <div className={`border rounded-lg p-4 cursor-pointer transition-colors ${
+              contractData.type === 'gmc' 
+                ? 'border-primary bg-primary bg-opacity-10' 
+                : 'border-gray-200 hover:border-gray-300'
+            }`} onClick={() => handleContractSelect('gmc')}>
               <h3 className="font-semibold text-gray-900 mb-2">
                 <TooltipWrapper content="Contract Type: A balanced option. Commit to buying at least 70% of your total needs to secure a good discount, with payments spread across deliveries.">
                   <span className="cursor-help">Guaranteed Minimum (GMC)</span>
@@ -182,13 +409,25 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
                 <p>• 20% penalty on undelivered</p>
                 <p>• Good discount access</p>
               </div>
-              <Button className="w-full" variant="outline">
-                Select GMC
+              <Button 
+                className="w-full" 
+                variant={contractData.type === 'gmc' ? 'default' : 'outline'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleContractSelect('gmc');
+                }}
+              >
+                {contractData.type === 'gmc' ? '✓ Selected' : 'Select GMC'}
               </Button>
             </div>
 
             {/* Spot Purchases */}
-            <div className="border border-gray-200 rounded-lg p-4">
+            <div className={`border rounded-lg p-4 cursor-pointer transition-colors ${
+              contractData.type === 'spot' 
+                ? 'border-primary bg-primary bg-opacity-10' 
+                : 'border-gray-200 hover:border-gray-300'
+            } ${currentState?.weekNumber > 2 ? '' : 'opacity-50'}`} 
+            onClick={() => currentState?.weekNumber > 2 && handleContractSelect('spot')}>
               <h3 className="font-semibold text-gray-900 mb-2">
                 <TooltipWrapper content="Contract Type: Maximum flexibility, highest cost. Order any amount of material, any week, with no commitment. You will pay the full list price with no discounts.">
                   <span className="cursor-help">Spot Purchases (SPT)</span>
@@ -200,13 +439,154 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
                 <p>• Maximum flexibility</p>
                 <p>• Minimal discounts</p>
               </div>
-              <Button className="w-full" variant="outline" disabled>
-                Available Later
+              <Button 
+                className="w-full" 
+                variant={contractData.type === 'spot' ? 'default' : 'outline'}
+                disabled={currentState?.weekNumber <= 2}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (currentState?.weekNumber > 2) {
+                    handleContractSelect('spot');
+                  }
+                }}
+              >
+                {contractData.type === 'spot' ? '✓ Selected' : 
+                 currentState?.weekNumber <= 2 ? 'Available Week 3+' : 'Select SPT'}
               </Button>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Material Ordering Interface */}
+      {contractData.type && (
+        <Card className="border border-gray-100 mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShoppingCart size={20} />
+              Material Orders
+            </CardTitle>
+            <p className="text-sm text-gray-600">
+              Specify quantities for each material type from your selected supplier
+            </p>
+          </CardHeader>
+          <CardContent>
+            {/* Supplier Selection */}
+            <div className="mb-6">
+              <Label className="text-base font-medium">Select Supplier</Label>
+              <div className="grid grid-cols-2 gap-4 mt-2">
+                <Button
+                  variant={selectedSupplier === 'supplier1' ? 'default' : 'outline'}
+                  onClick={() => setSelectedSupplier('supplier1')}
+                  className="justify-start"
+                >
+                  Supplier-1 (Premium) - 0% Defects
+                </Button>
+                <Button
+                  variant={selectedSupplier === 'supplier2' ? 'default' : 'outline'}
+                  onClick={() => setSelectedSupplier('supplier2')}
+                  className="justify-start"
+                >
+                  Supplier-2 (Standard) - Up to 5% Defects
+                </Button>
+              </div>
+            </div>
+
+            {/* Material Quantity Inputs */}
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {Object.entries(supplierPrices[selectedSupplier]).map(([material, price]) => (
+                  <div key={material} className="border border-gray-200 rounded-lg p-4">
+                    <Label className="text-sm font-medium capitalize">
+                      {material.replace(/([A-Z])/g, ' $1').trim()}
+                    </Label>
+                    <div className="text-xs text-gray-500 mb-2">
+                      Unit Price: {formatCurrency(price)}
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={materialQuantities[material] || ''}
+                      onChange={(e) => handleMaterialQuantityChange(material, parseInt(e.target.value) || 0)}
+                      placeholder="0"
+                      className="mb-2"
+                    />
+                    <div className="text-xs text-gray-600">
+                      Total: {formatCurrency((materialQuantities[material] || 0) * price)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Order Summary */}
+            {contractData.orders.length > 0 && (
+              <div className="mt-6 bg-gray-50 rounded-lg p-4">
+                <h4 className="font-medium text-gray-900 mb-3 flex items-center gap-2">
+                  <Calculator size={16} />
+                  Order Summary
+                </h4>
+                <div className="space-y-2">
+                  {contractData.orders.map((order, index) => (
+                    <div key={index} className="flex justify-between items-center text-sm">
+                      <span className="capitalize">
+                        {order.material.replace(/([A-Z])/g, ' $1').trim()}: {order.quantity.toLocaleString()} units
+                      </span>
+                      <span className="font-mono">{formatCurrency(order.totalCost)}</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-gray-200 pt-2 mt-2">
+                    <div className="flex justify-between items-center font-medium">
+                      <span>Subtotal:</span>
+                      <span className="font-mono">{formatCurrency(contractData.orders.reduce((sum, order) => sum + order.totalCost, 0))}</span>
+                    </div>
+                    {contractData.discount > 0 && (
+                      <div className="flex justify-between items-center text-green-600">
+                        <span>Volume Discount ({contractData.discount.toFixed(1)}%):</span>
+                        <span className="font-mono">-{formatCurrency(contractData.orders.reduce((sum, order) => sum + order.totalCost, 0) * (contractData.discount / 100))}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center font-bold text-lg border-t border-gray-300 pt-2 mt-2">
+                      <span>Total Commitment:</span>
+                      <span className="font-mono">{formatCurrency(contractData.totalCommitment)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-4 mt-6">
+              <Button
+                onClick={handleSave}
+                disabled={contractData.orders.length === 0 || updateStateMutation.isPending || !canPlaceOrders}
+                className="flex items-center gap-2"
+              >
+                {updateStateMutation.isPending ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <ShoppingCart size={16} />
+                    Save Procurement Plan
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {!canPlaceOrders && (
+              <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  Material ordering is only available during the Strategy and Development phases (Weeks 1-6).
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Volume Discount Tiers */}
       <Card className="border border-gray-100">
