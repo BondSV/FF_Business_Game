@@ -95,6 +95,64 @@ export interface ValidationResult {
 }
 
 export class GameEngine {
+  static processMaterialPurchases(currentState: any, updates: any): any {
+    const newPurchases = updates.materialPurchases || [];
+    const existingPurchases = currentState.materialPurchases || [];
+    
+    // Calculate total cost of new purchases
+    let totalPurchaseCost = 0;
+    const newPurchasesList = newPurchases.filter((purchase: any) => {
+      // Only process purchases that aren't already in the existing list
+      const isNew = !existingPurchases.some((existing: any) => 
+        existing.timestamp === purchase.timestamp
+      );
+      if (isNew) {
+        totalPurchaseCost += purchase.totalCommitment || 0;
+      }
+      return isNew;
+    });
+
+    if (newPurchasesList.length === 0) {
+      return updates; // No new purchases to process
+    }
+
+    // Update financial data
+    const currentCash = currentState.cashOnHand || GAME_CONSTANTS.STARTING_CAPITAL;
+    const currentCredit = currentState.creditAvailable || GAME_CONSTANTS.CREDIT_LIMIT;
+    
+    let updatedCashOnHand = currentCash;
+    let updatedCreditAvailable = currentCredit;
+    
+    if (totalPurchaseCost <= currentCash) {
+      // Pay with cash
+      updatedCashOnHand = currentCash - totalPurchaseCost;
+    } else {
+      // Use cash + credit
+      const remainingCost = totalPurchaseCost - currentCash;
+      updatedCashOnHand = 0;
+      updatedCreditAvailable = Math.max(0, currentCredit - remainingCost);
+    }
+
+    // Update material inventory when shipments arrive
+    const updatedMaterialInventory = { ...(currentState.materialInventory || {}) };
+    newPurchases.forEach((purchase: any) => {
+      if (purchase.shipmentWeek <= currentState.weekNumber) {
+        // Materials have arrived, add to inventory
+        purchase.orders?.forEach((order: any) => {
+          const currentInventory = updatedMaterialInventory[order.material] || 0;
+          updatedMaterialInventory[order.material] = currentInventory + order.quantity;
+        });
+      }
+    });
+
+    return {
+      ...updates,
+      cashOnHand: updatedCashOnHand,
+      creditAvailable: updatedCreditAvailable,
+      materialInventory: updatedMaterialInventory,
+      expenses: (currentState.expenses || 0) + totalPurchaseCost,
+    };
+  }
   
   static calculateDemand(
     product: keyof typeof GAME_CONSTANTS.PRODUCTS,
@@ -290,6 +348,8 @@ export class GameEngine {
       finishedGoods: {},
       productionSchedule: { batches: [] },
       procurementContracts: { contracts: [] },
+      materialPurchases: [],
+      materialInventory: {},
       marketingSpend: '0',
       weeklyDiscounts: { jacket: 0, dress: 0, pants: 0 },
       weeklyRevenue: '0',

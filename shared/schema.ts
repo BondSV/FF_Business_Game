@@ -70,6 +70,8 @@ export const weeklyStates = pgTable("weekly_states", {
   // Production and procurement
   productionSchedule: jsonb("production_schedule").notNull(),
   procurementContracts: jsonb("procurement_contracts").notNull(),
+  materialPurchases: jsonb("material_purchases").default('[]'),
+  materialInventory: jsonb("material_inventory").default('{}'),
   
   // Marketing and sales
   marketingSpend: decimal("marketing_spend", { precision: 10, scale: 2 }).default('0'),
