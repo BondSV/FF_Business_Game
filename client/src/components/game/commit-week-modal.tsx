@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Dialog,
@@ -95,7 +95,7 @@ export default function CommitWeekModal({
   });
 
   // Trigger validation when modal opens
-  React.useEffect(() => {
+  useEffect(() => {
     if (open && !validationData && !isValidating) {
       setIsValidating(true);
       validateMutation.mutate();

@@ -104,7 +104,7 @@ export default function DesignPricing({ gameSession, currentState }: DesignPrici
   });
 
   const handleInputChange = (productId: string, field: string, value: any) => {
-    setFormData(prev => ({
+    setFormData((prev: any) => ({
       ...prev,
       [productId]: {
         ...prev[productId],

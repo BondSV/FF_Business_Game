@@ -92,7 +92,7 @@ export default function Dashboard() {
   }
 
   // Show start game screen if no active game
-  if (!gameData?.gameSession) {
+  if (!gameData || !gameData.gameSession) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-md">
@@ -115,7 +115,8 @@ export default function Dashboard() {
     );
   }
 
-  const { gameSession, currentState } = gameData;
+  const gameSession = gameData?.gameSession;
+  const currentState = gameData?.currentState;
 
   const renderTabContent = () => {
     switch (activeTab) {

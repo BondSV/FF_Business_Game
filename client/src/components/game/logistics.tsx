@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
-import { Truck, Clock } from "lucide-react";
+import { Truck, Clock, Zap } from "lucide-react";
 
 interface LogisticsProps {
   gameSession: any;

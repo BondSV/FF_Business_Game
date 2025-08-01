@@ -195,7 +195,8 @@ export class GameEngine {
       } else {
         // Check if all RRPs are set
         for (const [product, data] of Object.entries(productData)) {
-          if (!data.rrp) {
+          const productInfo = data as any;
+          if (!productInfo.rrp) {
             errors.push(`RRP not set for ${product}`);
           }
         }

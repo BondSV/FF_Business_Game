@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
-import { BarChart3, LogOut } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { LogOut, ArrowRight, CheckCircle, Clock } from "lucide-react";
 
 interface HeaderProps {
   currentState: any;
@@ -9,108 +9,95 @@ interface HeaderProps {
 }
 
 export default function Header({ currentState, onCommitWeek }: HeaderProps) {
-  const handleLogout = () => {
-    window.location.href = "/api/logout";
-  };
+  const { user } = useAuth();
 
-  const formatCurrency = (value: number | string) => {
-    const num = typeof value === 'string' ? parseFloat(value) : value;
+  const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-GB', {
       style: 'currency',
       currency: 'GBP',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
-    }).format(num);
+    }).format(value);
   };
 
   const getPhaseInfo = (week: number) => {
-    if (week <= 2) return { name: 'Strategy Phase', color: 'bg-strategy text-white' };
-    if (week <= 6) return { name: 'Development Phase', color: 'bg-development text-white' };
-    if (week <= 12) return { name: 'Sales Phase', color: 'bg-sales text-white' };
-    return { name: 'Run-out Phase', color: 'bg-runout text-white' };
+    if (week <= 2) return { name: 'Strategy Phase', color: 'bg-blue-100 text-blue-800' };
+    if (week <= 6) return { name: 'Development Phase', color: 'bg-green-100 text-green-800' };
+    if (week <= 12) return { name: 'Sales Phase', color: 'bg-purple-100 text-purple-800' };
+    return { name: 'Run-out Phase', color: 'bg-orange-100 text-orange-800' };
   };
 
-  const currentWeek = currentState?.weekNumber || 1;
-  const phase = getPhaseInfo(currentWeek);
-  const cashOnHand = Number(currentState?.cashOnHand || 1000000);
-  const serviceLevel = 94.2; // This would come from calculations
-  const economicProfit = 850000; // This would come from calculations
+  const phase = getPhaseInfo(currentState?.weekNumber || 1);
 
   return (
     <header className="bg-white border-b border-gray-200 px-6 py-4">
       <div className="flex items-center justify-between">
-        {/* Logo and Title */}
-        <div className="flex items-center space-x-4">
-          <div className="h-10 w-10 bg-primary rounded-lg flex items-center justify-center">
-            <BarChart3 className="text-white" size={20} />
-          </div>
+        {/* Left side - Game info */}
+        <div className="flex items-center gap-6">
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">Vintage Revival Simulation</h1>
-            <p className="text-sm text-gray-600">Operations & Project Management</p>
+            <h1 className="text-xl font-bold text-gray-900">Vintage Revival</h1>
+            <p className="text-sm text-gray-600">Fast Fashion Business Simulation</p>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <Badge className={phase.color}>
+              {phase.name}
+            </Badge>
+            
+            <div className="flex items-center gap-2">
+              {currentState?.isCommitted ? (
+                <CheckCircle className="text-green-600" size={16} />
+              ) : (
+                <Clock className="text-gray-500" size={16} />
+              )}
+              <span className="text-sm font-medium">
+                Week {currentState?.weekNumber || 1}/15
+              </span>
+            </div>
+            
+            <div className="text-sm">
+              <span className="text-gray-600">Cash: </span>
+              <span className="font-mono font-semibold">
+                {formatCurrency(parseFloat(currentState?.cashOnHand || '500000'))}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* KPI Display */}
-        <div className="hidden lg:flex items-center space-x-6">
-          <div className="text-center">
-            <TooltipWrapper content="The percentage of customer demand you successfully met during the main sales period (Weeks 7-12). A low level indicates you had stock-outs and lost sales. Target: ≥95%.">
-              <div className="cursor-help">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Service Level</p>
-                <p className="text-lg font-bold text-gray-900">
-                  {currentWeek >= 7 ? `${serviceLevel.toFixed(1)}%` : '--%'}
-                </p>
-              </div>
-            </TooltipWrapper>
-          </div>
-
-          <div className="text-center">
-            <TooltipWrapper content="Your ultimate measure of profitability. It is your total revenue minus ALL costs, including a 10% annual charge on the capital you employed. This is more comprehensive than simple profit.">
-              <div className="cursor-help">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Economic Profit</p>
-                <p className="text-lg font-bold text-gray-900">
-                  {formatCurrency(economicProfit)}
-                </p>
-              </div>
-            </TooltipWrapper>
-          </div>
-
-          <div className="text-center">
-            <TooltipWrapper content="Your current liquid cash available. This does not include your available credit line. All operational expenses are paid from this.">
-              <div className="cursor-help">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cash on Hand</p>
-                <p className="text-lg font-bold text-gray-900 font-mono">
-                  {formatCurrency(cashOnHand)}
-                </p>
-              </div>
-            </TooltipWrapper>
-          </div>
-        </div>
-
-        {/* Week and Actions */}
-        <div className="flex items-center space-x-4">
-          {/* Week Indicator */}
-          <Badge className={`${phase.color} px-4 py-2`}>
-            Week {currentWeek} - {phase.name}
-          </Badge>
-
+        {/* Right side - Actions */}
+        <div className="flex items-center gap-4">
           {/* Commit Week Button */}
           <Button 
             onClick={onCommitWeek}
-            className="bg-primary hover:bg-blue-700"
             disabled={currentState?.isCommitted}
+            className="flex items-center gap-2"
           >
-            {currentState?.isCommitted ? 'Week Committed' : 'Commit Week'}
+            {currentState?.isCommitted ? (
+              <>
+                <CheckCircle size={16} />
+                Week Committed
+              </>
+            ) : (
+              <>
+                Commit Week {currentState?.weekNumber || 1}
+                <ArrowRight size={16} />
+              </>
+            )}
           </Button>
 
-          {/* Logout */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleLogout}
-            className="text-gray-400 hover:text-gray-600"
-          >
-            <LogOut size={18} />
-          </Button>
+          {/* User info and logout */}
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-700">
+              {(user as any)?.firstName || (user as any)?.email}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.location.href = "/api/logout"}
+            >
+              <LogOut size={16} />
+            </Button>
+          </div>
         </div>
       </div>
     </header>
