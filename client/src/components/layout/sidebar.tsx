@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { 
   Home, 
+  DollarSign,
   Palette, 
   ShoppingCart, 
   Factory, 
@@ -19,7 +20,8 @@ interface SidebarProps {
 
 const tabs = [
   { id: 'overview', label: 'Overview', icon: Home },
-  { id: 'design', label: 'Design & Pricing', icon: Palette },
+  { id: 'pricing', label: 'Pricing', icon: DollarSign },
+  { id: 'design', label: 'Design', icon: Palette },
   { id: 'procurement', label: 'Procurement', icon: ShoppingCart },
   { id: 'production', label: 'Production', icon: Factory },
   { id: 'logistics', label: 'Logistics', icon: Truck },

@@ -9,7 +9,8 @@ import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { isUnauthorizedError } from "@/lib/authUtils";
-import { ShoppingCart, Calculator } from "lucide-react";
+import { ShoppingCart, Calculator, Palette } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface ProcurementProps {
   gameSession: any;
@@ -54,6 +55,15 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
     wideWaleCorduroy: 0,
   });
 
+  const [printOptions, setPrintOptions] = useState<Record<string, boolean>>({
+    selvedgeDenim: false,
+    standardDenim: false,
+    egyptianCotton: false,
+    polyesterBlend: false,
+    fineWaleCorduroy: false,
+    wideWaleCorduroy: false,
+  });
+
   const [selectedSupplier, setSelectedSupplier] = useState<'supplier1' | 'supplier2'>('supplier1');
 
   // Load existing procurement data when component mounts or currentState changes
@@ -72,8 +82,10 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
         setSelectedSupplier(contracts.supplier);
       }
 
-      // Reconstruct material quantities from orders
-      if (contracts.orders && contracts.orders.length > 0) {
+      // Reconstruct material quantities and print options from saved data
+      if (contracts.materialQuantities) {
+        setMaterialQuantities(contracts.materialQuantities);
+      } else if (contracts.orders && contracts.orders.length > 0) {
         const quantities: Record<string, number> = {
           selvedgeDenim: 0,
           standardDenim: 0,
@@ -89,10 +101,14 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
         
         setMaterialQuantities(quantities);
       }
+
+      if (contracts.printOptions) {
+        setPrintOptions(contracts.printOptions);
+      }
     }
   }, [currentState]);
 
-  // Material prices for both suppliers
+  // Material prices for both suppliers (base prices)
   const supplierPrices = {
     supplier1: {
       selvedgeDenim: 16,
@@ -111,6 +127,47 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
     },
   };
 
+  // Print surcharges for both suppliers
+  const printSurcharges = {
+    supplier1: {
+      selvedgeDenim: 3,
+      standardDenim: 3,
+      egyptianCotton: 2,
+      polyesterBlend: 2,
+      fineWaleCorduroy: 3,
+      wideWaleCorduroy: 3,
+    },
+    supplier2: {
+      selvedgeDenim: 2,
+      egyptianCotton: 1,
+      polyesterBlend: 1,
+      fineWaleCorduroy: 2,
+      wideWaleCorduroy: 2,
+    },
+  };
+
+  // Get materials relevant to the current design choices
+  const getRelevantMaterials = () => {
+    const productData = currentState?.productData || {};
+    const relevantMaterials = new Set<string>();
+    
+    // Add materials based on design choices
+    Object.values(productData).forEach((product: any) => {
+      if (product?.fabric) {
+        relevantMaterials.add(product.fabric);
+      }
+    });
+    
+    // If no design choices made yet, show all materials
+    if (relevantMaterials.size === 0) {
+      return Object.keys(supplierPrices[selectedSupplier]);
+    }
+    
+    return Array.from(relevantMaterials).filter(material => 
+      supplierPrices[selectedSupplier][material as keyof typeof supplierPrices.supplier1] !== undefined
+    );
+  };
+
   // Calculate volume discount
   const calculateDiscount = (totalVolume: number, supplier: string) => {
     if (totalVolume >= 500000) return supplier === 'supplier1' ? 0.12 : 0.12;
@@ -127,8 +184,12 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
 
     Object.entries(materialQuantities).forEach(([material, quantity]) => {
       if (quantity > 0) {
-        const unitPrice = supplierPrices[selectedSupplier][material as keyof typeof supplierPrices.supplier1];
-        if (unitPrice) {
+        const basePrice = supplierPrices[selectedSupplier][material as keyof typeof supplierPrices.supplier1];
+        const printSurcharge = printOptions[material] ? 
+          (printSurcharges[selectedSupplier][material as keyof typeof printSurcharges.supplier1] || 0) : 0;
+        
+        if (basePrice !== undefined) {
+          const unitPrice = basePrice + printSurcharge;
           const order: MaterialOrder = {
             supplier: selectedSupplier,
             material,
@@ -152,7 +213,7 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
       totalCommitment: discountedCost,
       discount: discount * 100,
     }));
-  }, [materialQuantities, selectedSupplier]);
+  }, [materialQuantities, printOptions, selectedSupplier]);
 
   // Save procurement data mutation
   const updateStateMutation = useMutation({
@@ -200,11 +261,20 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
     }));
   };
 
+  const handlePrintOptionChange = (material: string, hasPrint: boolean) => {
+    setPrintOptions(prev => ({
+      ...prev,
+      [material]: hasPrint,
+    }));
+  };
+
   const handleSave = () => {
     const updates = {
       procurementContracts: {
         ...contractData,
         supplier: selectedSupplier,
+        printOptions,
+        materialQuantities,
         timestamp: new Date().toISOString(),
       },
     };
@@ -495,29 +565,74 @@ export default function Procurement({ gameSession, currentState }: ProcurementPr
             {/* Material Quantity Inputs */}
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {Object.entries(supplierPrices[selectedSupplier]).map(([material, price]) => (
-                  <div key={material} className="border border-gray-200 rounded-lg p-4">
-                    <Label className="text-sm font-medium capitalize">
-                      {material.replace(/([A-Z])/g, ' $1').trim()}
-                    </Label>
-                    <div className="text-xs text-gray-500 mb-2">
-                      Unit Price: {formatCurrency(price)}
+                {getRelevantMaterials().map((material) => {
+                  const basePrice = supplierPrices[selectedSupplier][material as keyof typeof supplierPrices.supplier1];
+                  const printSurcharge = printSurcharges[selectedSupplier][material as keyof typeof printSurcharges.supplier1] || 0;
+                  const finalPrice = basePrice + (printOptions[material] ? printSurcharge : 0);
+                  
+                  return (
+                    <div key={material} className="border border-gray-200 rounded-lg p-4">
+                      <Label className="text-sm font-medium capitalize">
+                        {material.replace(/([A-Z])/g, ' $1').trim()}
+                      </Label>
+                      <div className="text-xs text-gray-500 mb-2">
+                        Base Price: {formatCurrency(basePrice)}
+                        {printSurcharge > 0 && (
+                          <span className="ml-1">
+                            (Print: +{formatCurrency(printSurcharge)})
+                          </span>
+                        )}
+                      </div>
+                      
+                      {/* Print Option */}
+                      <div className="flex items-center space-x-2 mb-3">
+                        <Checkbox
+                          id={`print-${material}`}
+                          checked={printOptions[material] || false}
+                          onCheckedChange={(checked) => handlePrintOptionChange(material, !!checked)}
+                        />
+                        <Label 
+                          htmlFor={`print-${material}`} 
+                          className="text-xs text-gray-600 cursor-pointer flex items-center gap-1"
+                        >
+                          <Palette size={12} />
+                          Add Print (+{formatCurrency(printSurcharge)})
+                        </Label>
+                      </div>
+
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1000"
+                        value={materialQuantities[material] || ''}
+                        onChange={(e) => handleMaterialQuantityChange(material, parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="mb-2"
+                      />
+                      <div className="text-xs text-gray-600">
+                        <div>Unit Price: {formatCurrency(finalPrice)}</div>
+                        <div className="font-medium">
+                          Total: {formatCurrency((materialQuantities[material] || 0) * finalPrice)}
+                        </div>
+                      </div>
                     </div>
-                    <Input
-                      type="number"
-                      min="0"
-                      step="1000"
-                      value={materialQuantities[material] || ''}
-                      onChange={(e) => handleMaterialQuantityChange(material, parseInt(e.target.value) || 0)}
-                      placeholder="0"
-                      className="mb-2"
-                    />
-                    <div className="text-xs text-gray-600">
-                      Total: {formatCurrency((materialQuantities[material] || 0) * price)}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
+
+              {/* Show message if no materials are available based on design choices */}
+              {getRelevantMaterials().length === 0 && (
+                <div className="text-center p-6 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Palette className="mx-auto mb-2 text-blue-500" size={24} />
+                  <p className="text-sm text-blue-800 font-medium mb-1">
+                    Complete your product designs first
+                  </p>
+                  <p className="text-xs text-blue-600">
+                    Visit the Design tab to select materials for your products. 
+                    Only selected materials will appear here for procurement.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Order Summary */}

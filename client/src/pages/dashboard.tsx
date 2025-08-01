@@ -9,7 +9,8 @@ import Sidebar from "@/components/layout/sidebar";
 import KpiCards from "@/components/game/kpi-cards";
 import ProductPortfolio from "@/components/game/product-portfolio";
 import Timeline from "@/components/game/timeline";
-import DesignPricing from "@/components/game/design-pricing";
+import Pricing from "@/components/game/pricing";
+import Design from "@/components/game/design";
 import Procurement from "@/components/game/procurement";
 import Production from "@/components/game/production";
 import Logistics from "@/components/game/logistics";
@@ -19,7 +20,7 @@ import CommitWeekModal from "@/components/game/commit-week-modal";
 import { Button } from "@/components/ui/button";
 import { ArrowRight } from "lucide-react";
 
-type Tab = 'overview' | 'design' | 'procurement' | 'production' | 'logistics' | 'marketing' | 'analytics';
+type Tab = 'overview' | 'pricing' | 'design' | 'procurement' | 'production' | 'logistics' | 'marketing' | 'analytics';
 
 export default function Dashboard() {
   const { toast } = useToast();
@@ -92,7 +93,7 @@ export default function Dashboard() {
   }
 
   // Show start game screen if no active game
-  if (!gameData || !gameData.gameSession) {
+  if (!gameData || !(gameData as any)?.gameSession) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-md">
@@ -115,8 +116,8 @@ export default function Dashboard() {
     );
   }
 
-  const gameSession = gameData?.gameSession;
-  const currentState = gameData?.currentState;
+  const gameSession = (gameData as any)?.gameSession;
+  const currentState = (gameData as any)?.currentState;
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -128,8 +129,10 @@ export default function Dashboard() {
             <Timeline currentState={currentState} />
           </div>
         );
+      case 'pricing':
+        return <Pricing gameSession={gameSession} currentState={currentState} />;
       case 'design':
-        return <DesignPricing gameSession={gameSession} currentState={currentState} />;
+        return <Design gameSession={gameSession} currentState={currentState} />;
       case 'procurement':
         return <Procurement gameSession={gameSession} currentState={currentState} />;
       case 'production':
@@ -152,7 +155,7 @@ export default function Dashboard() {
       <div className="flex h-[calc(100vh-80px)]">
         <Sidebar 
           activeTab={activeTab} 
-          onTabChange={setActiveTab}
+          onTabChange={(tab: string) => setActiveTab(tab as Tab)}
           currentState={currentState}
         />
         
