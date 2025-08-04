@@ -138,7 +138,8 @@ export class GameEngine {
 
     // Update material inventory when shipments arrive
     const updatedMaterialInventory = { ...(currentState.materialInventory || {}) };
-    newPurchases.forEach((purchase: any) => {
+    // Only account for purchases that are newly detected in this update
+    newPurchasesList.forEach((purchase: any) => {
       if (purchase.shipmentWeek <= currentState.weekNumber) {
         // Materials have arrived, add to inventory
         purchase.orders?.forEach((order: any) => {
